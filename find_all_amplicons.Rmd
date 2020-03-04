@@ -1,0 +1,522 @@
+---
+title: "find_targets"
+author: "YW"
+date: "2/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Purpose: The DNA sequences of amplicon, and predict their RNA stability
+
+Step 1: separate bed file according to chromosome number
+The bed file "AKg54_S83.bed" has the number of read in each position, converted from BAM file using barbera
+``` {r echo=FALSE}
+
+files <- "AKg54_S83.bed"
+bed <- read.table(files,header = FALSE, sep="\t",stringsAsFactors=FALSE)
+name2 <-  unique(bed$V1)
+names <- data.frame(name1 = "chr", name2)
+chr_name <- paste(names$name1,names$name2, sep="")
+for (i in 1:length(chr_name)){
+  assign(chr_name[i], bed[bed$V1==name2[i],])
+}
+
+```
+
+Step 1: restrain peaks positions
+``` {r echo=FALSE}
+
+range_KN_ori <- read.table("Combined_408_ASD30-1000_GRCh38_FORALLELES.bed",header = FALSE, sep="\t",stringsAsFactors=FALSE)
+range_KN_2 <- range_KN_ori[-which((range_KN_ori$V3-range_KN_ori$V2)>10000),]
+
+range_SNP <- range_KN_2[(range_KN_2$V3-range_KN_2$V2)>1200,]
+range_STARR408 <- range_KN_2[(range_KN_2$V3-range_KN_2$V2)<1200,]
+# range where peaks should be in 
+
+```
+
+Step 2: Given good range, use max rise and down for each. 
+``` {r echo=FALSE}
+chr_lp <- unique(range_SNP$V1)
+peaks_df <- data.frame(matrix(ncol=7,nrow=dim(range_SNP)[1], dimnames=list(NULL, c("chr", "start", "end","name", "rat_U","rat_D","avg_h"))))
+
+count <- 1
+for (i in 1:length(chr_lp)){
+  ori_chr <- eval(parse(text=chr_lp[i])) # bed file with this chr
+  test_chr <- range_SNP[range_SNP$V1==chr_lp[i],] # known range with this chr
+  for (j in 1:dim(test_chr)[1]){
+    peaks_df$chr[count] <- chr_lp[i]
+    peaks_df$name[count] <- test_chr$V4[j]
+    range_start <- min(which(ori_chr$V3>=test_chr$V2[j]))
+    range_end <- max(which(ori_chr$V3<=test_chr$V3[j]))
+    if (is.infinite(range_start)|is.infinite(range_end)){
+      next
+    }
+    
+    temp_ori <- ori_chr[range_start:range_end,]
+    ratio_read_ <- temp_ori$V4[-1]/temp_ori$V4[-length(temp_ori$V4)]
+    if (length(ratio_read_)==0){
+      next
+    }else if (range_start>=range_end){
+      next
+    }
+    
+    start_id_lp <- which.max(ratio_read_)+1
+    end_id_lp <- which.min(ratio_read_)+1
+    peaks_df$start[count] <- (temp_ori$V3[start_id_lp])
+    peaks_df$end[count] <- (temp_ori$V3[end_id_lp])
+    peaks_df$rat_U[count] <- max(ratio_read_)
+    peaks_df$rat_D[count] <- 1/min(ratio_read_)
+    peaks_df$avg_h[count] <- mean(temp_ori$V4[start_id_lp:end_id_lp])
+    if (peaks_df$rat_U[count]==1){
+    }
+    count <- count+1
+ }
+}
+peaks_df <- peaks_df[complete.cases(peaks_df),]
+min_down_rate <- 10
+min_up_rate <- 10
+peaks_GQ <- peaks_df[(peaks_df$rat_U>min_up_rate)&(peaks_df$rat_D>min_down_rate),] #good quality
+
+temp_1 <- peaks_GQ$end-peaks_GQ$start
+max_length_amp <- 1000
+min_length_amp <- 800
+peaks_GQ_trim <- peaks_GQ[(temp_1<max_length_amp)&(temp_1>min_length_amp),]
+
+
+``` 
+Criteria used to identify peaks within the range: 1) the 1st of peak must be `r min_up_rate` times more reads than the previous nucleotide. Similarly, to finish the peak, the first non-peak must be `r min_down_rate` less. 
+2) peak longer than `r min_length_amp` and shorter than `r max_length_amp`
+
+The outcome I have is peaks_GQ_trim, as `r dim(peaks_GQ_trim)[1]` amplicons are identified. 
+
+
+
+explorative: see proportion of proband and siblings (conclusion: nothing special)
+``` {r echo=FALSE}
+library(stringr)
+right_S <- str_trunc(peaks_GQ_trim$name,15,"left")
+P_ID <- substr(right_S,7,12)
+p_s <- substr(right_S,14,14)
+# but there are lots of repeated Ss
+p_s_trun <- p_s[-which(duplicated(P_ID))]
+
+# so let's try the original data
+right_S_ori <- str_trunc(range_SNP$V4,15,"left")
+P_ID_ori <- substr(right_S_ori,7,12)
+p_s_ori <- substr(right_S_ori,14,14)
+# but there are lots of repeated Ss
+p_s_trun_ori <- p_s[-which(duplicated(P_ID_ori))]
+
+```
+There are more probands than subjects: `r table(p_s)` (proband vs. siblings), even after kicking out repeated probands: `r table(p_s_trun)`(proband vs. siblings). But originally there was more probands than siblings, so never mind...(proband vs. siblings): `r table(p_s_ori)` before making all subjects unique, and `r table(p_s_trun_ori)` after making all subjects unique
+Hence, data "peaks_GQ_trim" that shows the most obvious bands does not have a bias towards probands or siblings :)
+
+
+
+Step 3: re_verify: are those with good reads also high on expession
+The file "ASD1KV5_Combined_Amplicons_DupRem.txt" has right now the mRNA expession level. I think the expression level is normalized according to the range where amplicons exist, and may change a bit in the future. 
+``` {r echo=FALSE}
+veri_reads <- read.table("ASD1KV5_Combined_Amplicons_DupRem.txt",header = FALSE, sep="\t",stringsAsFactors=FALSE)
+S83_ <- veri_reads[,1:2] #AKg54_S83
+
+name_w_exp <- peaks_GQ_trim[,c(4,7)]
+colnames(S83_)[1] <- "name"
+temp_df <- merge(name_w_exp,S83_,by="name",all=TRUE)
+
+reads_vs_exp <- temp_df[complete.cases(temp_df), ]
+plot(reads_vs_exp$V2,reads_vs_exp$avg_h,xlab = "reference",ylab = "average reads in peak")
+
+dim(S83_[S83_$V2>100, ])
+
+```
+Hence, those detected with high reads also have high reads in the company output of expression amount, and many amplicons with low expression levels are also included. 
+
+
+Also, there is no correlation between up_ratio, down_ratio, and peak height:
+``` {r echo=FALSE}
+plot(peaks_GQ_trim$rat_D,peaks_GQ_trim$avg_h) 
+```
+
+
+Looks like there is a good spread of read strength
+there are 1193 sequences observed in reference result, but only 419 with clear known position in the bed file transformed from BAM
+
+
+optional: does the mutated position same as neucleotide? Aka, is my sequence reading method correct? 
+
+The code does not work now, but it was correct when I checked. 
+``` {r echo=FALSE}
+# # BiocManager::install("BSgenome.Hsapiens.NCBI.GRCh38")
+# library("BSgenome.Hsapiens.NCBI.GRCh38") # are we using this? Yes. 
+# 
+# # head(peaks_GQ_trim) #110789564 #1053_3_110789564_G_C_11398.s1
+# veri_SNP <- read.table("SFARI1000_SNVs_hg38_forMPILEUP.txt",header = FALSE, sep="\t",stringsAsFactors=FALSE)
+# 
+# saber <- vector(length=dim(peaks_GQ_trim)[1])
+# # saber <- vector(length=100)
+# for (i in 1:dim(peaks_GQ_trim)[1]){
+# # for (i in 1:100){
+#   # chr_lp <- substr(head(peaks_GQ_trim$chr[i]),4,nchar(head(peaks_GQ_trim$chr[i]))) #previous getSeq version
+#   chr_lp <- peaks_GQ_trim$chr[i]
+#   start_n <- peaks_GQ_trim$start[i]
+#   end_n <- peaks_GQ_trim$end[i]
+#   # a <- getSeq(Hsapiens, chr_lp, start = start_n, end = end_n) #previous version
+#   a <- getSeq(Hsapiens, chr_lp)
+#   # a[end_n-start_n+1]
+#   SNP_pos <- veri_SNP[veri_SNP$V4==peaks_GQ_trim$name[i],c(1,3,4)]
+#   # a[SNP_pos$V3-start_n+1]
+#   # SNP_pos$V4
+#   # bp_oriMod_ <- gsub("[^a-zA-Z]", "", SNP_pos$V4)
+#   bp_oriMod_ <- str_split(SNP_pos$V4,"_")
+#   # saber[i] <- substr(bp_oriMod_,nchar(bp_oriMod_)-2,nchar(bp_oriMod_)-2)==as.character(a[SNP_pos$V3-start_n+1])
+#   # saber[i] <- substr(bp_oriMod_[[1]][4],nchar(bp_oriMod_[[1]][4]),nchar(bp_oriMod_[[1]][4]))==as.character(a[SNP_pos$V3-start_n+1]) #previous version
+#   saber[i] <- substr(bp_oriMod_[[1]][4],nchar(bp_oriMod_[[1]][4]),nchar(bp_oriMod_[[1]][4]))==as.character(a[SNP_pos$V3])
+# }
+# # which(!saber) # which SNP original does not fit with UCSC #284 325 374 - insertion
+# # all SNP positions fit the reading of genome: genome reading is correct
+```
+
+
+Step 4: verify mutations are out of 150nt away from broaderline
+```{r echo=FALSE}
+
+for (i in 1:dim(peaks_GQ_trim)[1]){
+  chr_lp <- substr(peaks_GQ_trim$chr[i],4,nchar(head(peaks_GQ_trim$chr[i])))
+  start_n <- peaks_GQ_trim$start[i]
+  end_n <- peaks_GQ_trim$end[i]
+  SNP_pos <- veri_SNP[veri_SNP$V4==peaks_GQ_trim$name[i],c(1,3,4)]
+  dist1[i] <- SNP_pos$V3-start_n
+  dist2[i] <- end_n - SNP_pos$V3
+  if ((dist1[i]<150)|(dist2[i]<150)){print(i)}
+}
+
+```
+all SNP are above `r min(c(dist1,dist2)) ` away from boaderline. 
+
+Step 5: try to optimize running speed: Store all chromosome sequences together [working on progress]
+``` {r echo =FALSE}
+library(BSgenome)
+library("BSgenome.Hsapiens.NCBI.GRCh38")
+# Step 1: get whole sequence for each chromosome
+whole_chr_seq <- paste("whl_",unique(peaks_GQ_trim$chr), sep="")
+for (i in 1:length(whole_chr_seq)){
+  # assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 8,stop=12))) #previous getSeq version
+  assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 5,stop=12)))
+}
+
+# # Step 2: assign sequences with their name and location [seq_chr1]
+# assi_chr_seq <- paste("seq_",unique(peaks_GQ_trim$chr), sep="")
+# for (i in 1:length(assi_chr_seq)){
+#   temp_df <- peaks_GQ_trim[peaks_GQ_trim$chr==substr(assi_chr_seq[i],start = 5,stop=11),c(1,2,3,4)]
+#   temp_df$seq <- paste( eval(parse(text=whole_chr_seq[i]))[1],sep="")
+#   assign(assi_chr_seq[i], )
+# }
+
+# head(peaks_GQ_trim)
+
+
+
+```
+
+Next steps on finding sequences and predict their stability: 
+For simplicity, I did not include known length amplicons as controls. So what I will do is to use them as controls and include them in analysis
+
+There are only about 400 amplicons retrieved with confidence - where are the others? 1) find sharp peaks outside and 2) look for flat peaks/short/long peaks using different criteria.  
+
+calculate GC%
+
+microRNA enrichment analysis
+
+motifbreakR did not reveal any significant TF binding site alteration - need to recheck whether the code is correct [in progress]
+
+GC motif breaker 
+take each enrichment vs. GC background
+diff between + and -
+homer: enriched k-mer
+
+microrna prediction tool
+
+homer 400 + vs. - binding site
+homer motif
+compare test set (?)
+motifbreakr + control
+
+fetal brain enhancer is what we have
+
+can motifbreakr detect single snv? 
+
+
+
+<!-- *** Major 1 *** -->
+
+<!-- motifbreakR -->
+<!-- ``` {r echo=FALSE} -->
+<!-- BiocManager::install("motifbreakR") -->
+<!-- library("motifbreakR") -->
+<!-- BiocManager::install("SNPlocs.Hsapiens.dbSNP142.GRCh37") -->
+<!-- library("SNPlocs.Hsapiens.dbSNP142.GRCh37") -->
+<!-- BiocManager::install("BSgenome.Hsapiens.UCSC.hg19") -->
+<!-- library("BSgenome.Hsapiens.UCSC.hg19") -->
+
+<!-- library(motifbreakR) -->
+<!-- pca.snps.file <- system.file("extdata", "pca.enhancer.snps", package = "motifbreakR") -->
+<!-- pca.snps <- as.character(read.table(pca.snps.file)[,1]) -->
+
+<!-- # variants <- snps.from.rsid(rsid = pca.snps, -->
+<!-- #                            dbSNP = SNPlocs.Hsapiens.dbSNP142.GRCh37, -->
+<!-- #                            search.genome = BSgenome.Hsapiens.UCSC.hg19) -->
+<!-- variants <- snps.from.rsid(rsid = pca.snps, -->
+<!--                            dbSNP = SNPlocs.Hsapiens.dbSNP142.GRCh37, -->
+<!--                            search.genome = BSgenome.Hsapiens.UCSC.hg19) -->
+
+<!-- motifbreakr.results <- motifbreakR(snpList = variants, pwmList = MotifDb, threshold = 0.9) -->
+
+<!-- plotMB(results = motifbreakr.results, rsid = "rs7837328", effect = "strong") -->
+
+
+<!-- # use local bed file for motifbreakr -->
+<!-- dilidili <- system.file("extdata","danRer.bed",package="motifbreakR") -->
+<!-- read.table(dilidili) -->
+<!-- # xxx <- snps.from.file(dilidili,search.genome = BSgenome.Dierio.UCSC.danRer7,format="bed") -->
+<!-- ``` -->
+
+Step 2: store the good-quality peaks with single nt change into bed file as SNP (because motifbreakR is designed well for detecting SNP influence on TF)
+
+``` {r echo=FALSE}
+# Start: veri_SNP (yes!) peaks_GQ_trim (no!) 
+dilidili <- system.file("extdata","danRer.bed",package="motifbreakR")
+read.table(dilidili)
+# BiocManager::install("BSgenome.Drerio.UCSC.danRer7")
+library("BSgenome.Drerio.UCSC.danRer7")
+snps.mb <- snps.from.file(dilidili,
+search.genome = BSgenome.Drerio.UCSC.danRer7,
+format = "bed")
+
+#####
+# BiocManager::install("BSgenome.Hsapiens.UCSC.hg38")
+library("BSgenome.Hsapiens.UCSC.hg38")
+# satie <- head(str_split(veri_SNP$V4, "_"))
+
+# subStep 1: only select mutations as base substitutions (similar to SNP)
+Mozart_2 <- t(matrix(unlist(str_split(veri_SNP$V4, "_")),nrow=6))
+Kick_off_id <- unique(c(which(str_length(Mozart_2[,4])>1),which(str_length(Mozart_2[,4])>1)))
+Mozart <- Mozart_2[-Kick_off_id,]
+mut_2_SNP <- veri_SNP[-Kick_off_id,]
+
+##
+Mozart <- head(Mozart)
+mut_2_SNP <- head(mut_2_SNP)
+##
+
+df_SNPname <- paste("chr",Mozart[,2],":",Mozart[,3],":",Mozart[,4],":",Mozart[,5],sep="") #name format: chr : position : original : mutated
+
+df_chr <- paste("chr",mut_2_SNP$V1,sep="")
+# df_chr <- mut_2_SNP$V1
+df_st1 <- mut_2_SNP$V2
+df_st2 <- mut_2_SNP$V3
+
+# plus <- as.factor("+")
+df_bed <- data.frame(V1=df_chr,V2=df_st1,V3=df_st2,V4=df_SNPname, V5=0, V6="+") #V5 arbitrary, and we are on + strand (V6)
+
+df_bed <- data.frame(lapply(df_bed, trimws), stringsAsFactors = FALSE)
+
+write.table(df_bed, "motifbreakR_SFARI1000_SNVs_hg38_forMPILEUP.bed",col.names = F,row.names=F, sep="\t",quote=FALSE)
+
+snps.bed.file <- "motifbreakR_SFARI1000_SNVs_hg38_forMPILEUP.bed"
+snps.mb <- snps.from.file(snps.bed.file,
+search.genome = BSgenome.Hsapiens.UCSC.hg38,
+format = "bed")
+
+pca.enhancer.snps <- sample(snps.mb, 5)
+
+
+data(hocomoco)
+motifs <- sample(hocomoco, 50)
+
+results <- motifbreakR(pca.enhancer.snps,
+motifs, threshold = 0.85,
+method = "ic",
+BPPARAM=BiocParallel::SerialParam())
+# snps.mb <- snps.from.file(dilidili,
+# search.genome = BSgenome.Drerio.UCSC.danRer7,
+# format = "bed")
+
+m <- read.table("motifbreakR_SFARI1000_SNVs_hg38_forMPILEUP.bed", sep="\t",stringsAsFactors=FALSE)
+
+
+```
+
+<!-- ==== -->
+<!-- *** Major 2 *** -->
+<!-- another way to test for peaks without knowing the range  -->
+<!-- Step 2: designate dramatic change and find a peak/amplicon position -->
+<!-- ``` {r echo=FALSE} -->
+<!-- # designate: 32 fold = "dramatic" -->
+<!-- # why 32:  -->
+<!-- mm <- matrix(ncol=2,nrow=10000) -->
+<!-- for (i in 1:10000){ -->
+<!--   # if(sum(after_ > i*previous_)==sum(i*after_ < previous_)){ -->
+<!--   #   print(i) -->
+<!--   mm[i,] <- c(sum(after_ > i*previous_),sum(i*after_ < previous_)) -->
+<!-- } -->
+<!-- mm_new2 <- mm[mm[,2]!=0,] -->
+<!-- mm_fit <- mm_new2[mm_new2[,1]==mm_new2[,2]] -->
+<!-- # mm_fit[1:15,] #possible number of peaks -->
+<!-- P_Dra_fold <- vector(length = 15) -->
+<!-- for (i in 1:15){ -->
+<!--   P_Dra_fold[i] <- which(mm[,1]==mm_fit[i])[1] #potential designated fold change -->
+<!-- } -->
+
+
+<!-- # plot(x=1:9999,y=mm[-1,1]) # start -->
+<!-- # lines(x=1:9999,y=mm[-1,2]) # end -->
+
+<!-- ## why this trend? peak of end is smoother and peak of start is sharper. but why? also why it looks like this?  -->
+
+<!-- ``` -->
+
+<!-- ``` {r echo=FALSE} -->
+<!-- Dra_fold <- 32 # designated; those more suspecious are in P_Dra_fold -->
+<!-- after_ <- bed$V4[-1] # 2:max -->
+<!-- previous_ <- bed$V4[-length(bed$V4)] # 1:[max-1] -->
+
+<!-- rise_id <- which(after_ > Dra_fold*previous_)+1 #rise -->
+<!-- drop_id <- which(Dra_fold*after_ < previous_)+1 # drop  -->
+
+<!-- copy_rise_id <- rise_id -->
+<!-- copy_drop_id <- drop_id -->
+
+<!-- CP_on_drop <- matrix(ncol=2,nrow=length(drop_id)) -->
+<!-- for (i in 1:nrow(CP_on_drop)){ -->
+<!--   CP_on_drop[i,2] <- drop_id[i] -->
+<!--   if (sum(copy_rise_id[copy_rise_id<drop_id[i]])){ -->
+<!--     CP_on_drop[i,1] <- max(copy_rise_id[copy_rise_id<drop_id[i]])   -->
+<!--     copy_rise_id <- copy_rise_id[-(copy_rise_id<drop_id[i])] -->
+<!--     # copy_rise_id <- copy_rise_id[-(which(copy_rise_id==max(copy_rise_id<drop_id[i])))] -->
+<!--   }else{ -->
+<!--     CP_on_drop[i,1] <- 0 -->
+<!--   } -->
+<!-- } -->
+<!-- CP <- CP_on_drop[CP_on_drop[,1]!=0,] -->
+
+<!-- amp_length <- CP[,2]-CP[,1] -->
+<!-- # plot(1:length(amp_length),amp_length) -->
+<!-- x_ <- mean(amp_length) -->
+<!-- out_lim <- 1*sd(amp_length) -->
+
+<!-- CP_mod <- CP[- which((amp_length>(x_+out_lim))|(amp_length<(x_-out_lim))),] -->
+
+<!-- amp_start <- bed[CP_mod[,1],] -->
+<!-- amp_end <- bed[CP_mod[,2]-1,] -->
+
+<!-- ``` -->
+
+<!--  no wait... re-define significance -->
+<!--  Question: it will be way easier if I know how many amplicons there are...  -->
+<!--  Right now: fit math model -->
+<!-- ``` {r echo=FALSE} -->
+<!-- sort_bed_cov <- sort(bed$V4) -->
+<!-- # plot(1:length(bed$V4),sort_bed_cov) -->
+
+<!-- ratio_bed_ <- bed$V4[-1]/bed$V4[-length(sort_bed_cov)] -->
+<!-- plot(1:length(ratio_bed_),sort(ratio_bed_)) -->
+<!-- plot(1026001:length(ratio_bed_),sort(ratio_bed_)[1026001:length(ratio_bed_)]) -->
+
+<!-- # ratio_bed_cov <- sort_bed_cov[-1]/sort_bed_cov[-length(sort_bed_cov)] -->
+<!-- # plot(1:(length(bed$V4)-1),ratio_bed_cov,"l") -->
+<!-- ``` -->
+
+<!-- try math model -->
+<!-- ``` {r echo=FALSE} -->
+<!-- ######################## -->
+<!-- # Select an approximate $\theta$, since theta must be lower than min(y), and greater than zero -->
+<!-- data.df <- data.frame(x=1:1000,y=sort(ratio_bed_,decreasing=TRUE)[1:1000]) -->
+<!-- theta.0 <- min(data.df$y) * 0.5   -->
+
+<!-- # Estimate the rest parameters using a linear model -->
+<!-- model.0 <- lm(log(y - theta.0) ~ x, data=data.df)   -->
+<!-- alpha.0 <- exp(coef(model.0)[1]) -->
+<!-- beta.0 <- coef(model.0)[2] -->
+
+<!-- # Starting parameters -->
+<!-- start <- list(alpha = alpha.0, beta = beta.0, theta = theta.0) -->
+<!-- start -->
+<!-- plot(data.df$x, data.df$y) -->
+<!-- lines(data.df$x, predict(model.0, list(x = data.df$x)), col = 'skyblue', lwd = 3) -->
+<!-- ``` -->
+
+<!-- Step 3: verify -->
+<!-- Ummm nothing on Chr12 for STAR408 -->
+<!-- ``` {r echo=FALSE} -->
+<!-- ## step 1 -->
+<!-- file_known_amp <- "408_amps_GRCh38_unflanked.bed" -->
+<!-- bed_KN <- read.table(file_known_amp,header = FALSE, sep="\t",stringsAsFactors=FALSE) -->
+<!-- # amp_start -->
+<!-- # amp_end -->
+<!-- sum(amp_end$V1==13)  -->
+<!-- sum(bed_KN$V1=="chr13") # known 0 -->
+<!-- sum(amp_end$V1==12) -->
+<!-- sum(bed_KN$V1=="chr12") # known 30 -->
+
+<!-- "chr12	2285151	2286076	14_CACNA1C" -->
+<!-- which(chr12$V3==2285151) ## 1479: chr12[1477:1482,] -->
+<!-- which(chr12$V3==2286076) ## 2353: chr12[2350:2356,] -->
+
+<!-- # bed[bed$V1==12,][2354:2356,] # does not have chr12   2310594 2311510 17_CACNA1C -->
+<!-- ## so, some in (STAR408) is not in ASD1KV5 -->
+<!-- ## Umm of course, because they are different libraries lol -->
+
+<!-- ## step 2 -->
+<!-- range_KN_ori <- read.table("Combined_408_ASD30-1000_GRCh38_FORALLELES.bed",header = FALSE, sep="\t",stringsAsFactors=FALSE) -->
+<!-- range_KN <- range_KN_ori[-which((range_KN$V3-range_KN$V2)>10000),] -->
+
+<!-- range_SNP <- range_KN[range_KN$V3-range_KN$V2)>1200,] -->
+<!-- range_STARR408 <- range_KN[range_KN$V3-range_KN$V2)<1200,] -->
+<!-- # ## step 3 -->
+
+<!-- ``` -->
+
+<!-- ``` {r echo=FALSE} -->
+
+<!-- name3 <-  unique(amp_start$V1) -->
+<!-- names <- data.frame(name1 = "chr_veri_", name3) -->
+<!-- chr_name_veri <- paste(names$name1,names$name3, sep="") -->
+<!-- for (i in 1:length(chr_name_veri)){ -->
+<!--   assign(chr_name_veri[i], data.frame(start_id=amp_start[amp_start$V1==name2[i],2],end_id=amp_end[amp_end$V1==name2[i],3])) -->
+<!-- }  -->
+
+<!-- library("ggplot2") -->
+
+
+<!-- xp <- unique(amp_start$V1) -->
+<!-- a <- vector(length = length(xp)) -->
+<!-- for (i in 1:length(xp)){ -->
+<!--   a[i] <- sum(amp_start$V1==xp[i]) -->
+<!-- } -->
+<!-- xp1 <- data.frame(xp,a) -->
+
+<!-- win7 <- unique(amp_end$V1) -->
+<!-- b <- vector(length = length(win7)) -->
+<!-- for (i in 1:length(win7)){ -->
+<!--   b[i] <- sum(amp_end$V1==win7[i]) -->
+<!-- } -->
+<!-- win71 <- data.frame(win7,b) -->
+
+<!-- ``` -->
+
+
+<!-- ``` {r echo=FALSE} -->
+<!-- for (i in 1:20){ -->
+<!--   temp_ismm1 <- toupper(as.character(unlist(gRNA_ok_1_sub[i]))) -->
+<!--   temp_ismm2 <- Off_R_split[i] -->
+<!--   assign(var_name[i], temp_ismm1!=temp_ismm2) -->
+<!-- } -->
+
+<!-- ismm_F <- sapply(var_name, function(x) eval(parse(text = x))) -->
+
+
+<!-- ``` -->
