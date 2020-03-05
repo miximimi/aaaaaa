@@ -150,34 +150,34 @@ optional: does the mutated position same as neucleotide? Aka, is my sequence rea
 
 The code does not work now, but it was correct when I checked. 
 ``` {r echo=FALSE}
-# # BiocManager::install("BSgenome.Hsapiens.NCBI.GRCh38")
-# library("BSgenome.Hsapiens.NCBI.GRCh38") # are we using this? Yes. 
-# 
-# # head(peaks_GQ_trim) #110789564 #1053_3_110789564_G_C_11398.s1
-# veri_SNP <- read.table("SFARI1000_SNVs_hg38_forMPILEUP.txt",header = FALSE, sep="\t",stringsAsFactors=FALSE)
-# 
-# saber <- vector(length=dim(peaks_GQ_trim)[1])
-# # saber <- vector(length=100)
-# for (i in 1:dim(peaks_GQ_trim)[1]){
-# # for (i in 1:100){
-#   # chr_lp <- substr(head(peaks_GQ_trim$chr[i]),4,nchar(head(peaks_GQ_trim$chr[i]))) #previous getSeq version
-#   chr_lp <- peaks_GQ_trim$chr[i]
-#   start_n <- peaks_GQ_trim$start[i]
-#   end_n <- peaks_GQ_trim$end[i]
-#   # a <- getSeq(Hsapiens, chr_lp, start = start_n, end = end_n) #previous version
-#   a <- getSeq(Hsapiens, chr_lp)
-#   # a[end_n-start_n+1]
-#   SNP_pos <- veri_SNP[veri_SNP$V4==peaks_GQ_trim$name[i],c(1,3,4)]
-#   # a[SNP_pos$V3-start_n+1]
-#   # SNP_pos$V4
-#   # bp_oriMod_ <- gsub("[^a-zA-Z]", "", SNP_pos$V4)
-#   bp_oriMod_ <- str_split(SNP_pos$V4,"_")
-#   # saber[i] <- substr(bp_oriMod_,nchar(bp_oriMod_)-2,nchar(bp_oriMod_)-2)==as.character(a[SNP_pos$V3-start_n+1])
-#   # saber[i] <- substr(bp_oriMod_[[1]][4],nchar(bp_oriMod_[[1]][4]),nchar(bp_oriMod_[[1]][4]))==as.character(a[SNP_pos$V3-start_n+1]) #previous version
-#   saber[i] <- substr(bp_oriMod_[[1]][4],nchar(bp_oriMod_[[1]][4]),nchar(bp_oriMod_[[1]][4]))==as.character(a[SNP_pos$V3])
-# }
-# # which(!saber) # which SNP original does not fit with UCSC #284 325 374 - insertion
-# # all SNP positions fit the reading of genome: genome reading is correct
+# BiocManager::install("BSgenome.Hsapiens.NCBI.GRCh38")
+library("BSgenome.Hsapiens.NCBI.GRCh38") # are we using this? Yes.
+
+# head(peaks_GQ_trim) #110789564 #1053_3_110789564_G_C_11398.s1
+veri_SNP <- read.table("SFARI1000_SNVs_hg38_forMPILEUP.txt",header = FALSE, sep="\t",stringsAsFactors=FALSE)
+
+saber <- vector(length=dim(peaks_GQ_trim)[1])
+# saber <- vector(length=100)
+for (i in 1:dim(peaks_GQ_trim)[1]){
+# for (i in 1:100){
+  # chr_lp <- substr(head(peaks_GQ_trim$chr[i]),4,nchar(head(peaks_GQ_trim$chr[i]))) #previous getSeq version
+  chr_lp <- peaks_GQ_trim$chr[i]
+  start_n <- peaks_GQ_trim$start[i]
+  end_n <- peaks_GQ_trim$end[i]
+  # a <- getSeq(Hsapiens, chr_lp, start = start_n, end = end_n) #previous version
+  a <- getSeq(Hsapiens, chr_lp)
+  # a[end_n-start_n+1]
+  SNP_pos <- veri_SNP[veri_SNP$V4==peaks_GQ_trim$name[i],c(1,3,4)]
+  # a[SNP_pos$V3-start_n+1]
+  # SNP_pos$V4
+  # bp_oriMod_ <- gsub("[^a-zA-Z]", "", SNP_pos$V4)
+  bp_oriMod_ <- str_split(SNP_pos$V4,"_")
+  # saber[i] <- substr(bp_oriMod_,nchar(bp_oriMod_)-2,nchar(bp_oriMod_)-2)==as.character(a[SNP_pos$V3-start_n+1])
+  # saber[i] <- substr(bp_oriMod_[[1]][4],nchar(bp_oriMod_[[1]][4]),nchar(bp_oriMod_[[1]][4]))==as.character(a[SNP_pos$V3-start_n+1]) #previous version
+  saber[i] <- substr(bp_oriMod_[[1]][4],nchar(bp_oriMod_[[1]][4]),nchar(bp_oriMod_[[1]][4]))==as.character(a[SNP_pos$V3])
+}
+# which(!saber) # which SNP original does not fit with UCSC #284 325 374 - insertion
+# all SNP positions fit the reading of genome: genome reading is correct
 ```
 
 
@@ -197,15 +197,49 @@ for (i in 1:dim(peaks_GQ_trim)[1]){
 ```
 all SNP are above `r min(c(dist1,dist2)) ` away from boaderline. 
 
-Step 5: try to optimize running speed: Store all chromosome sequences together [working on progress]
+Step 5: %GC content, both each amplicon and overall
+Ps: better verify peak quality before conclusion
+``` {r echo=FALSE}
+
+seq_df <- peaks_GQ_trim[,1:4]
+seq_df$seq <- NA
+for (i in 1:length(whole_chr_seq)){
+  temp_seq <- eval(parse(text=whole_chr_seq[i]))
+  temp_n <- substr(whole_chr_seq[i],5,20)
+  temp_id <- which(seq_df$chr==temp_n)
+  start_pos <- seq_df[temp_id,]$start
+  end_pos <- seq_df[temp_id,]$end
+  for (j in 1:length(temp_id)){
+    seq_df[temp_id[j],]$seq <- as.character(temp_seq[start_pos[j]:end_pos[j]])
+  }
+}
+
+pika <- function(x){
+  pasta <- str_locate_all(x,c("A","G","T","C"))
+  pasta_A <- dim(pasta[[1]])[1]
+  pasta_G <- dim(pasta[[2]])[1]
+  pasta_T <- dim(pasta[[3]])[1]
+  pasta_C <- dim(pasta[[4]])[1]
+  (pasta_G+pasta_C)/(pasta_A+pasta_G+pasta_T+pasta_C)
+}
+
+seq_df$GC_perc <- sapply(seq_df$seq,pika)
+
+all_seq <- paste(seq_df$seq,collapse ="")
+AGTC_loc <- str_locate_all(all_seq,c("A","G","T","C")) #48.15% GC
+```
+All amplicons detected inclused `r (dim(AGTC_loc[[2]])[1]+dim(AGTC_loc[[4]])[1])/(dim(AGTC_loc[[2]])[1]+dim(AGTC_loc[[4]])[1]+dim(AGTC_loc[[1]])[1]+dim(AGTC_loc[[3]])[1])`% GC
+
+
+Step ?: try to optimize running speed: Store all chromosome sequences together [working on progress]
 ``` {r echo =FALSE}
 library(BSgenome)
 library("BSgenome.Hsapiens.NCBI.GRCh38")
 # Step 1: get whole sequence for each chromosome
 whole_chr_seq <- paste("whl_",unique(peaks_GQ_trim$chr), sep="")
 for (i in 1:length(whole_chr_seq)){
-  # assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 8,stop=12))) #previous getSeq version
-  assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 5,stop=12)))
+  assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 8,stop=12))) #previous getSeq version
+  # assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 5,stop=12)))
 }
 
 # # Step 2: assign sequences with their name and location [seq_chr1]
