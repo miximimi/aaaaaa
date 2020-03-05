@@ -148,7 +148,6 @@ there are 1193 sequences observed in reference result, but only 419 with clear k
 
 optional: does the mutated position same as neucleotide? Aka, is my sequence reading method correct? 
 
-The code does not work now, but it was correct when I checked. 
 ``` {r echo=FALSE}
 # BiocManager::install("BSgenome.Hsapiens.NCBI.GRCh38")
 library("BSgenome.Hsapiens.NCBI.GRCh38") # are we using this? Yes.
@@ -183,7 +182,8 @@ for (i in 1:dim(peaks_GQ_trim)[1]){
 
 Step 4: verify mutations are out of 150nt away from broaderline
 ```{r echo=FALSE}
-
+dist1 <- vector(length=dim(peaks_GQ_trim)[1])
+dist2 <- vector(length=dim(peaks_GQ_trim)[1])
 for (i in 1:dim(peaks_GQ_trim)[1]){
   chr_lp <- substr(peaks_GQ_trim$chr[i],4,nchar(head(peaks_GQ_trim$chr[i])))
   start_n <- peaks_GQ_trim$start[i]
@@ -196,6 +196,17 @@ for (i in 1:dim(peaks_GQ_trim)[1]){
 
 ```
 all SNP are above `r min(c(dist1,dist2)) ` away from boaderline. 
+
+Step: get sequence from each chromosome
+``` {r echo =FALSE}
+library(BSgenome)
+library("BSgenome.Hsapiens.NCBI.GRCh38")
+# Step 1: get whole sequence for each chromosome
+whole_chr_seq <- paste("whl_",unique(peaks_GQ_trim$chr), sep="")
+for (i in 1:length(whole_chr_seq)){
+  assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 8,stop=12))) #previous getSeq version
+}
+```
 
 Step 5: %GC content, both each amplicon and overall
 Ps: better verify peak quality before conclusion
@@ -230,17 +241,33 @@ AGTC_loc <- str_locate_all(all_seq,c("A","G","T","C")) #48.15% GC
 ```
 All amplicons detected inclused `r (dim(AGTC_loc[[2]])[1]+dim(AGTC_loc[[4]])[1])/(dim(AGTC_loc[[2]])[1]+dim(AGTC_loc[[4]])[1]+dim(AGTC_loc[[1]])[1]+dim(AGTC_loc[[3]])[1])`% GC
 
+Figure: what GC% each amplicon has
+``` {r echo=FALSE}
+hist(seq_df$GC_perc, breaks = 20,xlab = "%GC in each amplicon")
 
-Step ?: try to optimize running speed: Store all chromosome sequences together [working on progress]
+```
+
+Step 6: find CDEs and AREs
+high GC content means less stable stranscripts, yet most AREs are AT(AU) rich
+``` {r echo=FALSE}
+
+
+
+
+```
+
+
 ``` {r echo =FALSE}
-library(BSgenome)
-library("BSgenome.Hsapiens.NCBI.GRCh38")
-# Step 1: get whole sequence for each chromosome
-whole_chr_seq <- paste("whl_",unique(peaks_GQ_trim$chr), sep="")
-for (i in 1:length(whole_chr_seq)){
-  assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 8,stop=12))) #previous getSeq version
+# repeated step, get sequence of each chromosome, can be deleted
+
+# library(BSgenome)
+# library("BSgenome.Hsapiens.NCBI.GRCh38")
+# # Step 1: get whole sequence for each chromosome
+# whole_chr_seq <- paste("whl_",unique(peaks_GQ_trim$chr), sep="")
+# for (i in 1:length(whole_chr_seq)){
+#   assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 8,stop=12))) #previous getSeq version
   # assign(whole_chr_seq[i], getSeq(Hsapiens, substr(whole_chr_seq[i],start = 5,stop=12)))
-}
+# }
 
 # # Step 2: assign sequences with their name and location [seq_chr1]
 # assi_chr_seq <- paste("seq_",unique(peaks_GQ_trim$chr), sep="")
